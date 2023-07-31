@@ -1,7 +1,9 @@
 package com.example.CoronaVirusTracker.service;
 
 import com.example.CoronaVirusTracker.model.LocationStats;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -17,9 +19,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Service
+@Slf4j
 public class CoronaVirusService {
 
-    private static String URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv";
+    private static final String URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv";
 
     private List<LocationStats> allStats = new ArrayList<>();
 
@@ -28,26 +31,35 @@ public class CoronaVirusService {
     }
 
     @PostConstruct
-    @Scheduled(cron = "* * 1 * * *")
+    @Scheduled(cron = "0 0 * * * *") //fetch data every hour
     public void fetchData() throws IOException, InterruptedException {
         List<LocationStats> newStats = new ArrayList<>();
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(URL))
                 .build();
-        HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
-        StringReader reader = new StringReader(httpResponse.body());
-        Iterable<CSVRecord> records = CSVFormat.RFC4180.withFirstRecordAsHeader().parse(reader);
-        for (CSVRecord record : records) {
-            LocationStats locationStat = new LocationStats();
-            locationStat.setState(record.get("Province/State"));
-            locationStat.setCountry(record.get("Country/Region"));
-            int latestCases = Integer.parseInt(record.get(record.size() - 1));
-            int prevDayCases = Integer.parseInt(record.get(record.size() - 2));
-            locationStat.setLatestTotalCases(latestCases);
-            locationStat.setDiffFromPrevDay(latestCases - prevDayCases);
-            newStats.add(locationStat);
+        try {
+            HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+            StringReader reader = new StringReader(httpResponse.body());
+            CSVParser csvParser = new CSVParser(reader,CSVFormat.RFC4180);
+            for (CSVRecord record : csvParser) {
+                LocationStats locationStat = new LocationStats();
+                locationStat.setState(record.get("Province/State"));
+                locationStat.setCountry(record.get("Country/Region"));
+                try {
+                    int latestCases = Integer.parseInt(record.get(record.size() - 1));
+                    int prevDayCases = Integer.parseInt(record.get(record.size() - 2));
+                    locationStat.setLatestTotalCases(latestCases);
+                    locationStat.setDiffFromPrevDay(latestCases - prevDayCases);
+                } catch (NumberFormatException e) {
+                    log.error("Error while parsing data..."+e.getMessage());
+                    continue;
+                }
+                newStats.add(locationStat);
+            }
+            this.allStats = newStats;
+        } catch (Exception e) {
+            log.error("Error while fetching data from CSV..."+e.getMessage());
         }
-        this.allStats = newStats;
     }
 }
